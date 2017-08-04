@@ -69,7 +69,7 @@ flags.DEFINE_float('train_update_lr', -1, 'value of inner gradient step step dur
 
 def train(model, saver, sess, exp_string, data_generator, resume_itr=0):
     SUMMARY_INTERVAL = 100
-    SAVE_INTERVAL = 1000
+    SAVE_INTERVAL = 2000
     if FLAGS.datasource == 'sinusoid':
         PRINT_INTERVAL = 1000
         TEST_PRINT_INTERVAL = PRINT_INTERVAL*5
@@ -293,7 +293,8 @@ def main():
         model.construct_model(input_tensors=metaval_input_tensors, prefix='metaval_')
     model.summ_op = tf.summary.merge_all()
 
-    saver = loader = tf.train.Saver(tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES), max_to_keep=10)
+    saver = loader = tf.train.Saver(tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES), max_to_keep=0)
+    #print tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES)
 
     sess = tf.InteractiveSession()
 

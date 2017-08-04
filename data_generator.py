@@ -58,11 +58,12 @@ class DataGenerator(object):
             self.img_size = config.get('img_size', (84, 84))
             self.dim_input = np.prod(self.img_size)*3
             self.dim_output = self.num_classes
-            metatrain_folder = config.get('metatrain_folder', './data/miniImagenet/train')
+            #metatrain_folder = config.get('metatrain_folder', '/home/yanbin/FewShotMetaLearning/Data/miniImagenet/train')
+            metatrain_folder = config.get('metatrain_folder', '/home/yanbin/FewShotMetaLearning/Data/miniImagenet/train')
             if FLAGS.test_set:
-                metaval_folder = config.get('metaval_folder', './data/miniImagenet/test')
+                metaval_folder = config.get('metaval_folder', '/home/yanbin/FewShotMetaLearning/Data/miniImagenet/test')
             else:
-                metaval_folder = config.get('metaval_folder', './data/miniImagenet/val')
+                metaval_folder = config.get('metaval_folder', '/home/yanbin/FewShotMetaLearning/Data/miniImagenet/val')
 
             metatrain_folders = [os.path.join(metatrain_folder, label) \
                 for label in os.listdir(metatrain_folder) \

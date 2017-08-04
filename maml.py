@@ -1,6 +1,6 @@
 """ Code for the MAML algorithm and network definitions. """
 import numpy as np
-import special_grads
+#import special_grads
 import tensorflow as tf
 
 from tensorflow.python.platform import flags
@@ -123,6 +123,7 @@ class MAML:
                 outputas, outputbs, lossesa, lossesb, accuraciesa, accuraciesb = result
             else:
                 outputas, outputbs, lossesa, lossesb  = result
+            print outputas, outputbs
 
         ## Performance & Optimization
         if 'train' in prefix:
