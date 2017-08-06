@@ -154,7 +154,7 @@ class MAML:
         print 'tf.shape(outputbs[0]):', outputbs[0]
         print 'tf.shape(task_gateb):', task_gateb
         
-        expert_distribution = tf.stack(expert_list, 0)           # dim: n_moe*mbs*n_tr*n_cls
+        expert_distribution = tf.stack(outputbs, 0)           # dim: n_moe*mbs*n_tr*n_cls
         ## first gating then softmax
         # expert_distribution = tf.nn.softmax(expert_distribution) # softmax on cls dimention
         expert_distribution = tf.transpose(expert_distribution, perm=[1, 2, 3, 0])      # mbs*n_tr*n_cls*n_moe
