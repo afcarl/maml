@@ -133,7 +133,7 @@ def train(model, saver, sess, exp_string, data_generator, resume_itr=0):
             prelosses.append(result[-2])
             if FLAGS.log:
                 train_writer.add_summary(result[1], itr)
-            postlosses.append(result[-1])a
+            postlosses.append(result[-1])
             gating = result[-3]
 
         if (itr!=0) and itr % PRINT_INTERVAL == 0:
