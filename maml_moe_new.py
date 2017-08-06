@@ -55,12 +55,12 @@ class MAML:
             self.labelb = input_tensors['labelb']
 
         with tf.variable_scope('model', reuse=None) as training_scope:
-            if 'weights' in dir(self):
+            if 'weights_all' in dir(self):
                 training_scope.reuse_variables()
-                weights = self.weights
+                weights_all = self.weights_all
             else:
                 # Define the weights
-                self.weights = weights = self.construct_weights()
+                self.weights_all = weights_all = self.construct_weights()
 
             # outputbs[i] and lossesb[i] is the output and loss after i+1 gradient updates
             lossesa, outputas, lossesb, outputbs = [], [], [], []
@@ -80,21 +80,24 @@ class MAML:
                     task_accuraciesb = []
                 
                 # gate return
+                weights = {}
+                for k,v in weights_all.items():
+                    if k.endswith('_0'): # gating variables
+                        weights[k] = v
                 task_gateb = self.forward(inputb, weights, index=0, reuse=reuse)
 
                 for e in range(1, FLAGS.num_mixtures+1):
                     task_outputa = self.forward(inputa, weights, index=e, reuse=reuse)  # only reuse on the first iter
                     task_lossa = self.loss_func(task_outputa, labela)
 
+                    weights = {}
+                    for k,v in weights_all_items():
+                        if k.endswith('_'+str(e)):
+                            weights[k] = v
                     grads = tf.gradients(task_lossa, list(weights.values()))
-                    gradients = dict(zip(weights.keys(), grads))
-                    for k,v in gradients.items():
-                        if not k.endswith('_'+str(e)):  # if ends with "_1"  "_N"
-                            gradients[k] = tf.zeros_like(weights[k])
                     if FLAGS.stop_grad:
-                        for k,v in gradients.items():
-                            gradients[k] = tf.stop_gradient(v)
-
+                        grads = [tf.stop_gradient(grad) for grad in grads]
+                    gradients = dict(zip(weights.keys(), grads))
                     fast_weights = dict(zip(weights.keys(), [weights[key] - self.update_lr*gradients[key] for key in weights.keys()]))
                     output = self.forward(inputb, fast_weights, index=e, reuse=True)
                     #task_outputbs.append(output)
@@ -104,14 +107,9 @@ class MAML:
                         loss = self.loss_func(self.forward(inputa, fast_weights, index=e, reuse=True), labela)
 
                         grads = tf.gradients(loss, list(fast_weights.values()))
-                        gradients = dict(zip(fast_weights.keys(), grads))
-                        for k,v in gradients.items():
-                            if not k.endswith('_'+str(e)):  # if ends with "_1"  "_N"
-                                gradients[k] = tf.zeros_like(fast_weights[k])
                         if FLAGS.stop_grad:
-                            for k,v in gradients.items():
-                                gradients[k] = tf.stop_gradient(v)
-
+                            grads = [tf.stop_gradient(grad) for grad in grads]
+                        gradients = dict(zip(fast_weights.keys(), grads))
                         fast_weights = dict(zip(fast_weights.keys(), [fast_weights[key] - self.update_lr*gradients[key] for key in fast_weights.keys()]))
                         output = self.forward(inputb, fast_weights, index=e, reuse=True)
                         #task_outputbs.append(output)
