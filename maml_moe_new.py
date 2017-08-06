@@ -17,6 +17,9 @@ class MAML:
         self.meta_lr = tf.placeholder_with_default(FLAGS.meta_lr, ())
         self.classification = False
         self.test_num_updates = test_num_updates
+
+        self.temp = tf.placeholder(tf.float32)
+
         if FLAGS.datasource == 'sinusoid':
             self.dim_hidden = [40, 40]
             self.loss_func = mse
@@ -87,13 +90,15 @@ class MAML:
                 task_gateb = self.forward(inputb, weights, index=0, reuse=reuse)
 
                 for e in range(1, FLAGS.num_mixtures+1):
+                    # initialize weights for expert_e here
+                    weights = {}
+                    for k,v in weights_all.items():
+                        if k.endswith('_'+str(e)):
+                            weights[k] = v
+
                     task_outputa = self.forward(inputa, weights, index=e, reuse=reuse)  # only reuse on the first iter
                     task_lossa = self.loss_func(task_outputa, labela)
 
-                    weights = {}
-                    for k,v in weights_all_items():
-                        if k.endswith('_'+str(e)):
-                            weights[k] = v
                     grads = tf.gradients(task_lossa, list(weights.values()))
                     if FLAGS.stop_grad:
                         grads = [tf.stop_gradient(grad) for grad in grads]
@@ -119,7 +124,7 @@ class MAML:
                     task_outputbs.append(output)
                     task_lossesb.append(self.loss_func(output, labelb))
 
-                    task_output = [task_outputa, task_outputbs, task_lossa, task_lossesb]
+                    task_output = [task_outputa, task_outputbs, task_lossa, task_lossesb, task_gateb]
 
                 if self.classification:
                     task_accuracya = tf.contrib.metrics.accuracy(tf.argmax(tf.nn.softmax(task_outputa), 1), tf.argmax(labela, 1))
@@ -133,36 +138,83 @@ class MAML:
                 # to initialize the batch norm vars, might want to combine this, and not run idx 0 twice.
                 unused = task_metalearn((self.inputa[0], self.inputb[0], self.labela[0], self.labelb[0]), False)
 
-            out_dtype = [tf.float32, [tf.float32]*FLAGS.num_mixtures, tf.float32, [tf.float32]*FLAGS.num_mixtures]
+            out_dtype = [tf.float32, [tf.float32]*FLAGS.num_mixtures, tf.float32, [tf.float32]*FLAGS.num_mixtures, tf.float32]
             if self.classification:
                 out_dtype.extend([tf.float32, [tf.float32]*FLAGS.num_mixtures])
             result = tf.map_fn(task_metalearn, elems=(self.inputa, self.inputb, self.labela, self.labelb), dtype=out_dtype, parallel_iterations=FLAGS.meta_batch_size)
             if self.classification:
-                outputas, outputbs, lossesa, lossesb, accuraciesa, accuraciesb = result
+                outputas, outputbs, lossesa, lossesb, task_gateb, accuraciesa, accuraciesb = result
             else:
-                outputas, outputbs, lossesa, lossesb  = result
-            print outputas, outputbs
+                outputas, outputbs, lossesa, lossesb, task_gateb = result
+
+        ## gating here: TODO
+        # outputbs dims: n_moe list of mbs*n_tr*n_cls
+        # task_gateb dims: mbs*n_tr*n_moe
+        print 'len(outputbs):', len(outputbs)
+        print 'tf.shape(outputbs[0]):', outputbs[0]
+        print 'tf.shape(task_gateb):', task_gateb
         
-        # gating here: TODO
+        expert_distribution = tf.stack(expert_list, 0)           # dim: n_moe*mbs*n_tr*n_cls
+        ## first gating then softmax
+        # expert_distribution = tf.nn.softmax(expert_distribution) # softmax on cls dimention
+        expert_distribution = tf.transpose(expert_distribution, perm=[1, 2, 3, 0])      # mbs*n_tr*n_cls*n_moe
+
+        if FLAGS.uniform_expert:  # uniform weights on all experts
+            gating_distribution = tf.zeros_like(expert_distribution)
+            gates = tf.reduce_mean(gating_distribution, 2) # dim: mbs*n_tr*n_cls*n_moe -->mbs*n_tr*n_moe
+        elif FLAGS.onehot_expert: # onehot weights 1 for expert0
+            mask1 = 100*tf.ones_like(expert_distribution[:,:,:,0])
+            mask2 = tf.ones_like(expert_distribution[:,:,:,1:])
+            gating_distribution = tf.concat([tf.expand_dims(mask1,-1), mask2], -1)
+            gates = tf.reduce_mean(gating_distribution, 2) # dim: mbs*n_tr*n_cls*n_moe -->mbs*n_tr*n_moe
+        else:
+            # gate dimention: mbs*n_tr*n_moe
+            # expand_dims: mbs*n_tr*1*n_moe, tile: mbs*n_tr*n_cls*n_moe
+            gates = gates/(self.temp + 1.0)  # use temprature before softmax
+            gating_distribution = tf.tile(tf.expand_dims(gates, 2), [1,1,self.dim_output,1])
+
+        expert_distribution = tf.reshape(
+            expert_distribution,
+            [-1, FLAGS.num_mixtures])  # (mbs*n_tr*n_cls) x n_moe
+        gating_distribution = tf.nn.softmax(tf.reshape(
+            gating_distribution,
+            [-1, FLAGS.num_mixtures])) # (mbs*n_tr*n_cls) x n_moe
+
+        moe_output = tf.reduce_sum(
+            gating_distribution * expert_distribution, 1)
+        moe_output = tf.reshape(moe_output, [-1, self.dim_output])
+
+	# sample gating for output to check
+        self.gating_distribution = tf.nn.softmax(gates)[0, 1:10, :]
+
 
         ## Performance & Optimization
+        moe_label = tf.reshape(self.labelb, [-1, self.dim_output])
+        self.moe_loss = xent(moe_output, moe_label)
+        self.moe_acc  = tf.contrib.metrics.accuracy(tf.argmax(tf.nn.softmax(moe_output), 1), tf.argmax(moe_label, 1))
+        # use cross_entropy loss instead of softmax_with_cross_entropy
+        # self.moe_loss = cross_entropy_loss(moe_output, moe_label)
+        # self.moe_acc  = tf.contrib.metrics.accuracy(tf.argmax(moe_output, 1), tf.argmax(moe_label, 1))
+
         if 'train' in prefix:
-            self.total_loss1 = total_loss1 = tf.reduce_sum(lossesa) / tf.to_float(FLAGS.meta_batch_size)
+            # self.total_loss1 = total_loss1 = tf.reduce_sum(lossesa) / tf.to_float(FLAGS.meta_batch_size)
+            self.total_loss1 = total_loss1 = self.moe_loss
             self.total_losses2 = total_losses2 = [tf.reduce_sum(lossesb[j]) / tf.to_float(FLAGS.meta_batch_size) for j in range(FLAGS.num_mixtures)]
             # after the map_fn
-            # self.outputas, self.outputbs = outputas, outputbs
             if self.classification:
-                self.total_accuracy1 = total_accuracy1 = tf.reduce_sum(accuraciesa) / tf.to_float(FLAGS.meta_batch_size)
+                # self.total_accuracy1 = total_accuracy1 = tf.reduce_sum(accuraciesa) / tf.to_float(FLAGS.meta_batch_size)
+                self.total_accuracy1 = total_accuracy1 = self.moe_acc
                 self.total_accuracies2 = total_accuracies2 = [tf.reduce_sum(accuraciesb[j]) / tf.to_float(FLAGS.meta_batch_size) for j in range(FLAGS.num_mixtures)]
 
-            self.pretrain_op = tf.train.AdamOptimizer(self.meta_lr).minimize(total_loss1)
+            # self.pretrain_op = tf.train.AdamOptimizer(self.meta_lr).minimize(total_loss1)
 
             if FLAGS.metatrain_iterations > 0:
                 optimizer = tf.train.AdamOptimizer(self.meta_lr)
                 if FLAGS.uniform_loss:
                     self.gvs = gvs = optimizer.compute_gradients(tf.reduce_sum(self.total_losses2))
                 else:
-                    self.gvs = gvs = optimizer.compute_gradients(self.total_losses2[FLAGS.num_mixtures-1])
+                    # self.gvs = gvs = optimizer.compute_gradients(self.total_losses2[FLAGS.num_mixtures-1])
+                    self.gvs = gvs = optimizer.compute_gradients(self.moe_loss)
                 if FLAGS.datasource == 'miniimagenet':
                     gvs_new = []
                     for grad, var in gvs:
@@ -175,21 +227,23 @@ class MAML:
                     #gvs = [(tf.clip_by_value(grad, -10, 10), var) for grad, var in gvs]
                 self.metatrain_op = optimizer.apply_gradients(gvs)
         else:
-            self.metaval_total_loss1 = total_loss1 = tf.reduce_sum(lossesa) / tf.to_float(FLAGS.meta_batch_size)
+            #self.metaval_total_loss1 = total_loss1 = tf.reduce_sum(lossesa) / tf.to_float(FLAGS.meta_batch_size)
+            self.metaval_total_loss1 = total_loss1 = self.moe_loss
             self.metaval_total_losses2 = total_losses2 = [tf.reduce_sum(lossesb[j]) / tf.to_float(FLAGS.meta_batch_size) for j in range(FLAGS.num_mixtures)]
             if self.classification:
-                self.metaval_total_accuracy1 = total_accuracy1 = tf.reduce_sum(accuraciesa) / tf.to_float(FLAGS.meta_batch_size)
+                # self.metaval_total_accuracy1 = total_accuracy1 = tf.reduce_sum(accuraciesa) / tf.to_float(FLAGS.meta_batch_size)
+                self.metaval_total_accuracy1 = total_accuracy1 = self.moe_acc
                 self.metaval_total_accuracies2 = total_accuracies2 =[tf.reduce_sum(accuraciesb[j]) / tf.to_float(FLAGS.meta_batch_size) for j in range(FLAGS.num_mixtures)]
 
         ## Summaries
-        tf.summary.scalar(prefix+'Pre-update loss', total_loss1)
+        tf.summary.scalar(prefix+'moe loss', total_loss1)
         if self.classification:
-            tf.summary.scalar(prefix+'Pre-update accuracy', total_accuracy1)
+            tf.summary.scalar(prefix+'moe accuracy', total_accuracy1)
 
         for j in range(FLAGS.num_mixtures):
-            tf.summary.scalar(prefix+'Post-update loss, step ' + str(j+1), total_losses2[j])
+            tf.summary.scalar(prefix+'expert loss, step ' + str(j+1), total_losses2[j])
             if self.classification:
-                tf.summary.scalar(prefix+'Post-update accuracy, step ' + str(j+1), total_accuracies2[j])
+                tf.summary.scalar(prefix+'expert accuracy, step ' + str(j+1), total_accuracies2[j])
 
     ### Network construction functions (fc networks and conv networks)
     def construct_fc_weights(self):

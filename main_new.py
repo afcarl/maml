@@ -56,8 +56,13 @@ flags.DEFINE_integer('num_filters', 64, 'number of filters for conv nets -- 32 f
 flags.DEFINE_bool('conv', True, 'whether or not to use a convolutional network, only applicable in some cases')
 flags.DEFINE_bool('max_pool', False, 'Whether or not to use max pooling rather than strided convolutions')
 flags.DEFINE_bool('stop_grad', False, 'if True, do not use second derivatives in meta-optimization (for speed)')
+
+## MOE related params
 flags.DEFINE_integer('num_mixtures', 2, 'moe nums')
 flags.DEFINE_bool('uniform_loss', False, 'use loss1+loss2+...+loss_moe')
+flags.DEFINE_bool('uniform_expert', False, 'uniform expert gating to 1/num_mixtures')
+flags.DEFINE_bool('onehot_expert', False, 'onehot expert gating to [1, 0, ...]')
+flags.DEFINE_float('base_temp', 0.0, 'base temprature softmax(x/(temp+1)))') 
 
 ## Logging, saving, and testing options
 flags.DEFINE_bool('log', True, 'if false, do not log summaries, for debugging code.')
@@ -86,7 +91,9 @@ def train(model, saver, sess, exp_string, data_generator, resume_itr=0):
 
     num_classes = data_generator.num_classes # for classification, 1 otherwise
     multitask_weights, reg_weights = [], []
+    
 
+    temp = FLAGS.base_temp
     for itr in range(resume_itr, FLAGS.pretrain_iterations + FLAGS.metatrain_iterations):
         feed_dict = {}
         if 'generate' in dir(data_generator):
@@ -103,6 +110,12 @@ def train(model, saver, sess, exp_string, data_generator, resume_itr=0):
             inputb = batch_x[:, num_classes*FLAGS.update_batch_size:, :] # b used for testing
             labelb = batch_y[:, num_classes*FLAGS.update_batch_size:, :]
             feed_dict = {model.inputa: inputa, model.inputb: inputb,  model.labela: labela, model.labelb: labelb}
+
+
+        # decay for softmax temprature       
+        if itr%100==0 and itr>0:
+            temp = temp*0.95
+        feed_dict[model.temp] = temp
 
         if itr < FLAGS.pretrain_iterations:
             input_tensors = [model.pretrain_op]
@@ -129,6 +142,9 @@ def train(model, saver, sess, exp_string, data_generator, resume_itr=0):
                 print_str = 'Iteration ' + str(itr - FLAGS.pretrain_iterations)
             print_str += ': ' + str(np.mean(prelosses)) + ', ' + str(postlosses)
             print(print_str)
+            print 'temp:', sess.run(model.temp, feed_dict=feed_dict)
+            if itr % (10*PRINT_INTERVAL) == 0:
+                print gating
             prelosses, postlosses = [], []
 
         if (itr!=0) and itr % SAVE_INTERVAL == 0:
@@ -148,12 +164,12 @@ def train(model, saver, sess, exp_string, data_generator, resume_itr=0):
                 inputb = batch_x[:, num_classes*FLAGS.update_batch_size:, :]
                 labela = batch_y[:, :num_classes*FLAGS.update_batch_size, :]
                 labelb = batch_y[:, num_classes*FLAGS.update_batch_size:, :]
-                feed_dict = {model.inputa: inputa, model.inputb: inputb,  model.labela: labela, model.labelb: labelb, model.meta_lr: 0.0}
+                feed_dict = {model.inputa: inputa, model.inputb: inputb,  model.labela: labela, model.labelb: labelb, model.meta_lr: 0.0, model.temp:0.0}
                 if model.classification:
                     input_tensors = [model.total_accuracy1, model.total_accuracies2]
                 else:
                     input_tensors = [model.total_loss1, model.total_losses2]
-
+            feed_dict[model.temp] = 0.0
             result = sess.run(input_tensors, feed_dict)
             print('Validation results: ' + str(result[0]) + ', ' + str(result[1]))
 
@@ -173,7 +189,7 @@ def test(model, saver, sess, exp_string, data_generator, test_num_updates=None):
     for _ in range(NUM_TEST_POINTS):
         if 'generate' not in dir(data_generator):
             feed_dict = {}
-            feed_dict = {model.meta_lr : 0.0}
+            feed_dict = {model.meta_lr : 0.0, model.temp: 0.0}
             if model.classification:
                 result = sess.run([model.metaval_total_accuracy1] + model.metaval_total_accuracies2, feed_dict)
             else:
@@ -191,7 +207,7 @@ def test(model, saver, sess, exp_string, data_generator, test_num_updates=None):
             labela = batch_y[:, :num_classes*FLAGS.update_batch_size, :]
             labelb = batch_y[:,num_classes*FLAGS.update_batch_size:, :]
 
-            feed_dict = {model.inputa: inputa, model.inputb: inputb,  model.labela: labela, model.labelb: labelb, model.meta_lr: 0.0}
+            feed_dict = {model.inputa: inputa, model.inputb: inputb,  model.labela: labela, model.labelb: labelb, model.meta_lr: 0.0, model.temp: 0.0}
 
             if model.classification:
                 result = sess.run([model.total_accuracy1] + model.total_accuracies2, feed_dict)
@@ -332,6 +348,12 @@ def main():
         exp_string += 'moe'+str(FLAGS.num_mixtures)
     if FLAGS.uniform_loss:
         exp_string += 'uniloss'
+    if FLAGS.uniform_expert:
+        exp_string += "uniformmoe"
+    if FLAGS.onehot_expert:
+        exp_string += "onehotmoe"
+    if not FLAGS.base_temp==0:
+        exp_string += ".temp"+str(FLAGS.base_temp)
 
     resume_itr = 0
     model_file = None
