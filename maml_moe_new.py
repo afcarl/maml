@@ -198,7 +198,7 @@ class MAML:
 
         if 'train' in prefix:
             # self.total_loss1 = total_loss1 = tf.reduce_sum(lossesa) / tf.to_float(FLAGS.meta_batch_size)
-            self.total_loss1 = total_loss1 = self.moe_loss
+            self.total_loss1 = total_loss1 = tf.reduce_sum(self.moe_loss) / tf.to_float(FLAGS.meta_batch_size)
             self.total_losses2 = total_losses2 = [tf.reduce_sum(lossesb[j]) / tf.to_float(FLAGS.meta_batch_size) for j in range(FLAGS.num_mixtures)]
             # after the map_fn
             if self.classification:
@@ -214,7 +214,7 @@ class MAML:
                     self.gvs = gvs = optimizer.compute_gradients(tf.reduce_sum(self.total_losses2))
                 else:
                     # self.gvs = gvs = optimizer.compute_gradients(self.total_losses2[FLAGS.num_mixtures-1])
-                    self.gvs = gvs = optimizer.compute_gradients(self.moe_loss)
+                    self.gvs = gvs = optimizer.compute_gradients(total_loss1)
                 if FLAGS.datasource == 'miniimagenet':
                     gvs_new = []
                     for grad, var in gvs:
@@ -228,7 +228,7 @@ class MAML:
                 self.metatrain_op = optimizer.apply_gradients(gvs)
         else:
             #self.metaval_total_loss1 = total_loss1 = tf.reduce_sum(lossesa) / tf.to_float(FLAGS.meta_batch_size)
-            self.metaval_total_loss1 = total_loss1 = self.moe_loss
+            self.metaval_total_loss1 = total_loss1 = tf.reduce_sum(self.moe_loss) / tf.to_float(FLAGS.meta_batch_size)
             self.metaval_total_losses2 = total_losses2 = [tf.reduce_sum(lossesb[j]) / tf.to_float(FLAGS.meta_batch_size) for j in range(FLAGS.num_mixtures)]
             if self.classification:
                 # self.metaval_total_accuracy1 = total_accuracy1 = tf.reduce_sum(accuraciesa) / tf.to_float(FLAGS.meta_batch_size)
