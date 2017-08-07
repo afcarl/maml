@@ -168,7 +168,8 @@ class MAML:
             gating_distribution = tf.concat([tf.expand_dims(mask1,-1), mask2], -1)
             gates = tf.reduce_mean(gating_distribution, 2) # dim: mbs*n_tr*n_cls*n_moe -->mbs*n_tr*n_moe
         else:
-            # gate dimention: mbs*n_tr*n_moe
+            # gate dimention: ambs*n_tr*n_moe
+	    gates = task_gateb
             # expand_dims: mbs*n_tr*1*n_moe, tile: mbs*n_tr*n_cls*n_moe
             gates = gates/(self.temp + 1.0)  # use temprature before softmax
             gating_distribution = tf.tile(tf.expand_dims(gates, 2), [1,1,self.dim_output,1])
