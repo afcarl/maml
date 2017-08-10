@@ -186,7 +186,7 @@ class MAML:
         moe_output = tf.reshape(moe_output, [-1, self.dim_output])
 
 	# sample gating for output to check
-        self.gating_distribution = tf.nn.softmax(gates)[0, 1:10, :]
+        self.gating_distribution = tf.nn.softmax(gates)
 
 
         ## Performance & Optimization
@@ -213,6 +213,9 @@ class MAML:
                 optimizer = tf.train.AdamOptimizer(self.meta_lr)
                 if FLAGS.uniform_loss:
                     self.gvs = gvs = optimizer.compute_gradients(tf.reduce_sum(self.total_losses2))
+                elif FLAGS.total_loss:
+                    loss2 = tf.reduce_sum(self.total_losses2)
+                    self.gvs = gvs = optimizer.compute_gradients(total_loss1 + 0.2/4*loss2)
                 else:
                     # self.gvs = gvs = optimizer.compute_gradients(self.total_losses2[FLAGS.num_mixtures-1])
                     self.gvs = gvs = optimizer.compute_gradients(total_loss1)

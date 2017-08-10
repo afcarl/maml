@@ -60,6 +60,7 @@ flags.DEFINE_bool('stop_grad', False, 'if True, do not use second derivatives in
 ## MOE related params
 flags.DEFINE_integer('num_mixtures', 2, 'moe nums')
 flags.DEFINE_bool('uniform_loss', False, 'use loss1+loss2+...+loss_moe')
+flags.DEFINE_bool('total_loss', False, 'use loss1+loss2+...+loss_moe')
 flags.DEFINE_bool('uniform_expert', False, 'uniform expert gating to 1/num_mixtures')
 flags.DEFINE_bool('onehot_expert', False, 'onehot expert gating to [1, 0, ...]')
 flags.DEFINE_float('base_temp', 0.0, 'base temprature softmax(x/(temp+1)))') 
@@ -349,6 +350,8 @@ def main():
         exp_string += 'moe'+str(FLAGS.num_mixtures)
     if FLAGS.uniform_loss:
         exp_string += 'uniloss'
+    if FLAGS.total_loss:
+        exp_string += 'totalloss'
     if FLAGS.uniform_expert:
         exp_string += "uniformmoe"
     if FLAGS.onehot_expert:
